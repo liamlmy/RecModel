@@ -16,7 +16,7 @@ common:
   shuffle: true
 model_params:
   deep_layers:
-    - 1024
+    - 2048
     - 1024
     - 256
   dropout_deep:
