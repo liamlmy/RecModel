@@ -15,7 +15,7 @@ class Model:
 		self.conf_yml = conf_yml
 		self.model = None
 		if conf is None:
-			self.conf = ut.load_yaml_file(conf_yml)
+			self.conf = ut.load_yml_file(conf_yml)
 		else:
 			self.conf = conf
 
@@ -175,3 +175,107 @@ class DeepFMModel(Model):
 		self.model.training = enable_training
 
 
+class XDeepFMModel(Model):
+	def __init__(self, conf_yml="xdfm.yml", conf=None):
+		super().__init__(conf_yml, conf)
+
+	def make_config(self):
+		if "model_params" not in self.conf:
+			print("please config model_params in %s"%(self.conf_yml), file=sys.stderr)
+			return
+		fea_slot, feature_size = self.get_fea_slot()
+		multi_fea = self.get_target_fea_slot("multihot_fea_conf", fea_slot)
+		preemb_fea = self.get_target_fea_slot("preemb_fea_conf", fea_slot)
+		session_fea = self.get_target_fea_slot("session_fea_conf", fea_slot)
+		sid_fea = self.get_target_fea_slot("sid_fea_conf", fea_slot)
+		x = self.conf["model_params"]
+		x["feature_size"] = feature_size
+		x["field_size"] = len(fea_slot)
+		x["multi_fea"] = multi_fea
+		x["preemb_fea"] = preemb_fea
+		x["session_fea"] = session_fea
+		x["sid_fea"] = sid_fea
+		if self.conf["switch"]["enable_calc_padding"]:
+			self.conf["common"]["padding_size"] = self.get_padding_size(fea_slot, multi_fea, self.conf["common"]["fix_addition_pad"])
+		ut.save_yaml_file(self.conf, self.conf_yml)
+
+	def set_training_mode(self, enable_training):
+		self.model.training = enable_training
+		pass
+
+
+class DINModel(Model):
+	def __init__(self, conf="din.yml", conf=None):
+		super().__init__(conf_yml, conf)
+
+	def make_config(self):
+		if "model_params" not in self.conf:
+			print("please config model_params in %s"%(self.conf_yml), file=sys.stderr)
+			return
+		fea_slot, feature_size = self.get_fea_slot()
+		multi_fea = self.get_target_fea_slot("multihot_fea_conf", fea_slot)
+		preemb_fea = self.get_target_fea_slot("preemb_fea_conf", fea_slot)
+		session_fea = self.get_target_fea_slot("session_fea_conf", fea_slot)
+		sid_fea = self.get_target_fea_slot("sid_fea_conf", fea_slot)
+		x = self.conf["model_params"]
+		x["feature_size"] = feature_size
+		x["field_size"] = len(fea_slot)
+		x["multi_fea"] = multi_fea
+		x["preemb_fea"] = preemb_fea
+		x["session_fea"] = session_fea
+		x["sid_fea"] = sid_fea
+		if self.conf["switch"]["enable_calc_padding"]:
+			self.conf["common"]["padding_size"] = self.get_padding_size(fea_slot, multi_fea, self.conf["common"]["fix_addition_pad"])
+		ut.save_yaml_file(self.conf, self.conf_yml)
+
+	def set_training_mode(self, enable_training):
+		self.model.training = enable_training
+		pass
+
+
+if __name__ == "__main__":
+	parse = argparse.ArgumentParser(description="train&evaluate the DNN model")
+	parse.add_argument("-m", type=str, help="-method:train|test|auto_config", required=True)
+	parse.add_argument("-conf", type=str, help="yml conf", required=True)
+	parse.add_argument("-model", type=str, help="init model dir")
+	parse.add_argument("-data", type=str, help="input data files")
+	args = parse.parse_args()
+	x = ut.load_yml_file(args.conf)
+	mc = x["common"]["model_class"]
+	mcif = mc + "Model"
+	z = globals()
+	solver = None
+	if mcif in z:
+		solver = z[mcif][args.conf, x]
+	else:
+		solver = Model(args.conf, x)
+		print("no model interface %s find"%(mcif), file=sys.stderr)
+
+	os.environ["CUDA_VISIBLE_DEVICES"] = x["common"]["CUDA_VISIBLE_DEVICES"]
+	print("CUDA_VISIBLE_DEVICES={}".format(os.environ["CUDA_VISIBLE_DEVICES"]))
+	gpus = tf.config.experimental.list_physical_devices("GPU")
+	for gpu in gpus:
+		tf.config.experimental.set_memory_growth(gpu, True)
+	if args.m == "train":
+		info = {}
+		com_conf = x["common"]
+		batch_size = com_conf["batch_size"]
+		shuffle_size = batch_size * 10
+		ds = ut.ReadTFRecord(args.data, shuffle_size=shuffle_size, batch_size=batch_size, fetch_size=1, num_parallel=10)
+		solver.train(ds)
+	elif args.m == "test":
+		if args.data:
+			ds = ut.ReadTFRecord(args.data, batch_size=1024, fetch_size=1)
+			solver.batch_test_local(ds, args.model)
+		else:
+			solver.batch_test(sys.stdin, args.model)
+	elif args.m == "predict":
+		solver.batch_test(sys.stdin, args.model, ofs=sys.stdout, is_test=False)
+	elif args.m == "predict_info":
+		solver.batch_test(sys.stdin, args.model, ofs=sys.stdout, is_test=False, output_infos=True)
+	elif args.m == "dump_serving":
+		solver.dump_serving_model(args.model)
+	elif args.m == "auto_config":
+		solver.make_config()
+	else:
+		pass
