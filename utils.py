@@ -114,4 +114,3 @@ def ReadTFRecord(files, shuffle_size=1, batch_size=1, fetch_size=1, num_parallel
         dataset = dataset.prefetch(fetch_size)
     return dataset
 
-
