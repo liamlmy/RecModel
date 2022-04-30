@@ -1,0 +1,55 @@
+common:
+  model_class: DeepFM
+  CUDA_VISIBLE_DEVICES: '0'
+  batch_size: 512
+  epoch_num: 5
+  common_conf: ./conf/common.conf
+  fea_slot_file: ./model/fea_slot
+  feature_list_file: ./model/feature_list
+  local_model_dir: ./model
+  mulithot_fea_conf: ./conf/padding_feaname.conf
+  preemb_fea_conf: ./conf/preemb_feaname.conf
+  session_fea_conf: ./conf/session_feaname.conf
+  sid_fea_conf: ./conf/sid_feaname.conf
+  fix_addition_pad: 505
+  padding_size: 1174
+  shuffle: true
+model_params:
+  cin_layers:
+    - 64
+    - 32
+  deep_layers:
+    - 2048
+    - 1024
+    - 256
+  dropout_deep:
+    - 0.0
+    - 0.0
+    - 0.0
+    - 0.0
+  dropout_fm:
+    - 0.0
+    - 0.0
+  embedding_size: 8
+  feature_size: 222568
+  field_size: 669
+  l2_reg: 0.001
+  learning_rate: 0.0005
+  mulit_fea:
+    - - 493
+      - 626
+  preemb_fea:
+    - - 197537
+      - 197564
+  session_fea:
+    - - 222513
+      - 222538
+  sid_fea:
+    - - 2256
+      - 7455
+  use_bn: true
+  zscore_file: ./model/predictor.zscore
+switch:
+  enable_calc_padding: true
+  enable_epoch_dump: true
+  enable_make_config: true
