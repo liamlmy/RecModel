@@ -12,18 +12,18 @@ import numpy as np
 import tensorflow as tf
 import utils as ut
 
-from DSSM import DSSM
-from WideDepp import WideDeep
+#from DSSM import DSSM
+#from WideDepp import WideDeep
 from DeepFM import DeepFM
-from XDeepFM import XDeepFM
-from DIN import DIN
-from DCN import DCN
-from SENet import SENet
-from ESSM import ESSM
-from MMOE import MMOE
-from CGC import CGC
-from PLE import PLE
-from PEPNet import PEPNet
+#from XDeepFM import XDeepFM
+#from DIN import DIN
+#from DCN import DCN
+#from SENet import SENet
+#from ESSM import ESSM
+#from MMOE import MMOE
+#from CGC import CGC
+#from PLE import PLE
+#from PEPNet import PEPNet
 
 class Learner:
     """
@@ -46,22 +46,27 @@ class Learner:
         """
         get feature
         Args:
-        Returns
+        Returns:
+            fea_slot: a map of feature which key is feature name and value is [start index, end index] of feature slot
+            slot_size: the size of feature slot
+            fea_map: a map for different special feature which key is type of special feature and value is the list of slot
         Raises:
         """
-        fea_slot, fea_size = self.get_fea_slot()
+        fea_slot, slot_size = self.get_fea_slot()
         fea_map = {}
         fea_map["num_fea"] = self.get_target_fea_slot("num_fea_conf", fea_slot)
         fea_map["dense_fea"] = self.get_target_fea_slot("dense_fea_conf", fea_slot)
         fea_map["multi_fea"] = self.get_target_fea_slot("multi_fea_conf", fea_slot)
         fea_map["seq_fea"] = self.get_target_fea_slot("seq_fea_conf", fea_slot)
-        return fea_slot, fea_size, fea_map
+        return fea_slot, slot_size, fea_map
 
     def get_fea_slot(self):
         """
         get feature
         Args:
-        Returns
+        Returns:
+            fea_slot: a map of feature which key is feature name and value is [start index, end index] of feature slot
+            slot_size: the size of feature slot
         Raises:
         """
         feat_slot = {}
@@ -83,7 +88,10 @@ class Learner:
         """
         get feature
         Args:
-        Returns
+            target_fea: special type feature
+            fea_slot: a map of feature which key is feature name and value is [start index, end index] of feature slot
+        Returns:
+            res: slot list of target_fea
         Raises:
         """
         if fea_slot is None:
@@ -264,9 +272,9 @@ def DeepFMLearner(Learner):
         if "model_params" not in self.conf:
             print("please config model_params in {}".format(self.conf_file_path), file=sys.stderr)
             return
-        fea_slot, fea_size, fea_map = self.get_feature()
+        fea_slot, slot_size, fea_map = self.get_feature()
         model_params = self.conf["model_params"]
-        model_params["feature_size"] = fea_size
+        model_params["slot_size"] = slot_size
         model_params["field_size"] = len(fea_slot)
         model_params["num_fea"] = num_fea
         model_params["dense_fea"] = dense_fea
