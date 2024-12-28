@@ -1,4 +1,8 @@
-# coding:utf-8
+# coding: utf-8
+"""
+Author:
+    Mingyang Li: liamlmy@gmail.com
+"""
 
 import sys
 import tensorflow as tf

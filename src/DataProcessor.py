@@ -3,7 +3,7 @@
 import sys
 import random
 
-class PreProcess:
+class DataProcessor:
     def __init__(self, conf_file='', is_test=False):
         self.conf = {}
         self.is_test = is_test
@@ -158,6 +158,6 @@ if __name__ == "__main__":
     if len(sys.argv) > 2:
         if sys.argv[2] == "test":
             is_test = True
-    pre = PreProcess(conf_file=conf_file, is_test=is_test)
+    data_processor = DataProcessor(conf_file=conf_file, is_test=is_test)
     for line in sys.stdin:
-        pre.parse_line(line)
+        data_processor.parse_line(line)
