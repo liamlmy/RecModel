@@ -29,16 +29,16 @@ class Learner:
     """
     Class Learner is the basic class for model training, test etc.
     Attributes
-        model:
-        conf_yml:
-        conf:
+        model: the model prepared to train or test
+        conf_path: the path of model conf
+        conf: basic model conf
     """
-    def __init__(self, conf_yml, conf=None):
+    def __init__(self, conf_path, conf=None):
         """init"""
-        self.conf_yml = conf_yml
+        self.conf_path = conf_path
         self.model = None
         if conf is None:
-            self.conf = ut.load_yaml_file(conf_yml)
+            self.conf = ut.load_yml_file(conf_path)
         else:
            self.conf = conf
 
@@ -114,7 +114,11 @@ class Learner:
         """
         get feature
         Args:
-        Returns
+            fea_slot:
+            multihot_feaslot:
+            fix_addition:
+        Returns:
+            fea_size:
         Raises:
         """
         fea_size = len(fea_slot)
@@ -128,7 +132,8 @@ class Learner:
         """
         get feature
         Args:
-        Returns
+            enable_training:
+        Returns:
         Raises:
         """
         self.model.training = enable_training
@@ -137,7 +142,7 @@ class Learner:
         """
         get feature
         Args:
-        Returns
+        Returns:
         Raises:
         """
         pass
@@ -146,7 +151,8 @@ class Learner:
         """
         get feature
         Args:
-        Returns
+            training: whether training or not
+        Returns:
         Raises:
         """
         if self.model is not None:
@@ -160,11 +166,13 @@ class Learner:
             self.conf["model_params"]["training"] = True
         self.model = x[model_class](**self.conf["model_params"])
 
-    def prepare_dataset(self, ds):
+    def prepare_dataset(self, data):
         """
         get feature
         Args:
-        Returns
+            data:
+        Returns:
+            data:
         Raises:
         """
         common_conf = self.conf["common"]
@@ -172,15 +180,16 @@ class Learner:
         shuffle = common_conf["shuffle"]
         epoch_num = common_conf["epoch_num"]
         if shuffle:
-            ds = ds.shuffle(buffer_size=batch_size * 3)
-        ds = ds.batch(batch_size).prefetch(batch_size)
-        return ds
+            data = data.shuffle(buffer_size=batch_size * 3)
+        data = data.batch(batch_size).prefetch(batch_size)
+        return data
 
     def train(self, train_data):
         """
         get feature
         Args:
-        Returns
+            train_data:
+        Returns:
         Raises:
         """
         if self.model is None:
@@ -213,7 +222,9 @@ class Learner:
         """
         get feature
         Args:
-        Returns
+            test_data:
+            model_path:
+        Returns:
         Raises:
         """
         res = []
@@ -236,7 +247,10 @@ class Learner:
         """
         get feature
         Args:
-        Returns
+            data:
+            model_path:
+        Returns:
+            pred:
         Raises:
         """
         if self.model is None:
@@ -251,7 +265,8 @@ class Learner:
         """
         get feature
         Args:
-        Returns
+            model_path:
+        Returns:
         Raises:
         """
         if self.model is None:
@@ -269,6 +284,12 @@ def DeepFMLearner(Learner):
         super().__init__(conf_file_path, conf)
 
     def make_config(self):
+        """
+        get feature
+        Args:
+        Returns:
+        Raises:
+        """
         if "model_params" not in self.conf:
             print("please config model_params in {}".format(self.conf_file_path), file=sys.stderr)
             return
@@ -282,7 +303,7 @@ def DeepFMLearner(Learner):
         model_params["seq_fea"] = seq_fea
         if self.conf["switch"]["enable_calc_padding"]:
             self.conf["feature"]["padding_size"] = self.get_padding_size(fea_slot, multi_fea, self.conf["feature"]["fix_addition_pad"])
-        ut.save_yaml_file(self.conf, self.conf_file_path)
+        ut.save_yml_file(self.conf, self.conf_file_path)
 
 
 if __name__ == "__main__":
@@ -297,7 +318,7 @@ if __name__ == "__main__":
     os.environ['CUDA_VISIBLE_DEVICES']='0,1,2,3'
 
     if args.conf:
-        x = ut.load_yaml_file(args.conf)
+        x = ut.load_yml_file(args.conf)
         mc = x["common"]["model_class"]
         mcif = mc + "Learner"
         z = globals()

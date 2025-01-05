@@ -45,7 +45,7 @@ def auc(lis, scale=1e6):
 
 
 def load_yml_file(yml_file):
-    f = open(yml_file)
+    f = open(yml_file, 'r')
     ss = f.read()
     f.close()
     x = yaml.load(ss, Loader=yaml.FullLoader)
