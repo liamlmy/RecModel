@@ -1,0 +1,313 @@
+{
+  "label_names": [
+    "click",
+    "convert"
+  ],
+  "feature_counts": {
+    "numeric": 20,
+    "one_hot": 10,
+    "multi_hot": 5,
+    "sequence": 3,
+    "pretrained_embedding": 2
+  },
+  "feature_specs": [
+    {
+      "name": "num_001",
+      "feature_type": "numeric",
+      "feature_id": 101
+    },
+    {
+      "name": "num_002",
+      "feature_type": "numeric",
+      "feature_id": 102
+    },
+    {
+      "name": "num_003",
+      "feature_type": "numeric",
+      "feature_id": 103
+    },
+    {
+      "name": "num_004",
+      "feature_type": "numeric",
+      "feature_id": 104
+    },
+    {
+      "name": "num_005",
+      "feature_type": "numeric",
+      "feature_id": 105
+    },
+    {
+      "name": "num_006",
+      "feature_type": "numeric",
+      "feature_id": 106
+    },
+    {
+      "name": "num_007",
+      "feature_type": "numeric",
+      "feature_id": 107
+    },
+    {
+      "name": "num_008",
+      "feature_type": "numeric",
+      "feature_id": 108
+    },
+    {
+      "name": "num_009",
+      "feature_type": "numeric",
+      "feature_id": 109
+    },
+    {
+      "name": "num_010",
+      "feature_type": "numeric",
+      "feature_id": 110
+    },
+    {
+      "name": "num_011",
+      "feature_type": "numeric",
+      "feature_id": 111
+    },
+    {
+      "name": "num_012",
+      "feature_type": "numeric",
+      "feature_id": 112
+    },
+    {
+      "name": "num_013",
+      "feature_type": "numeric",
+      "feature_id": 113
+    },
+    {
+      "name": "num_014",
+      "feature_type": "numeric",
+      "feature_id": 114
+    },
+    {
+      "name": "num_015",
+      "feature_type": "numeric",
+      "feature_id": 115
+    },
+    {
+      "name": "num_016",
+      "feature_type": "numeric",
+      "feature_id": 116
+    },
+    {
+      "name": "num_017",
+      "feature_type": "numeric",
+      "feature_id": 117
+    },
+    {
+      "name": "num_018",
+      "feature_type": "numeric",
+      "feature_id": 118
+    },
+    {
+      "name": "num_019",
+      "feature_type": "numeric",
+      "feature_id": 119
+    },
+    {
+      "name": "num_020",
+      "feature_type": "numeric",
+      "feature_id": 120
+    },
+    {
+      "name": "oh_001",
+      "feature_type": "one_hot",
+      "hash_bucket_size": 128,
+      "hash_bucket_offset": 1000,
+      "default_id": 1127
+    },
+    {
+      "name": "oh_002",
+      "feature_type": "one_hot",
+      "hash_bucket_size": 128,
+      "hash_bucket_offset": 1128,
+      "default_id": 1255
+    },
+    {
+      "name": "oh_003",
+      "feature_type": "one_hot",
+      "hash_bucket_size": 128,
+      "hash_bucket_offset": 1256,
+      "default_id": 1383
+    },
+    {
+      "name": "oh_004",
+      "feature_type": "one_hot",
+      "hash_bucket_size": 128,
+      "hash_bucket_offset": 1384,
+      "default_id": 1511
+    },
+    {
+      "name": "oh_005",
+      "feature_type": "one_hot",
+      "hash_bucket_size": 128,
+      "hash_bucket_offset": 1512,
+      "default_id": 1639
+    },
+    {
+      "name": "oh_006",
+      "feature_type": "one_hot",
+      "hash_bucket_size": 128,
+      "hash_bucket_offset": 1640,
+      "default_id": 1767
+    },
+    {
+      "name": "oh_007",
+      "feature_type": "one_hot",
+      "hash_bucket_size": 128,
+      "hash_bucket_offset": 1768,
+      "default_id": 1895
+    },
+    {
+      "name": "oh_008",
+      "feature_type": "one_hot",
+      "hash_bucket_size": 128,
+      "hash_bucket_offset": 1896,
+      "default_id": 2023
+    },
+    {
+      "name": "oh_009",
+      "feature_type": "one_hot",
+      "hash_bucket_size": 128,
+      "hash_bucket_offset": 2024,
+      "default_id": 2151
+    },
+    {
+      "name": "oh_010",
+      "feature_type": "one_hot",
+      "hash_bucket_size": 128,
+      "hash_bucket_offset": 2152,
+      "default_id": 2279
+    },
+    {
+      "name": "mh_001",
+      "feature_type": "multi_hot",
+      "hash_bucket_size": 256,
+      "hash_bucket_offset": 3000,
+      "max_len": 6,
+      "delimiter": ",",
+      "value_delimiter": ":"
+    },
+    {
+      "name": "mh_002",
+      "feature_type": "multi_hot",
+      "hash_bucket_size": 256,
+      "hash_bucket_offset": 3256,
+      "max_len": 6,
+      "delimiter": ",",
+      "value_delimiter": ":"
+    },
+    {
+      "name": "mh_003",
+      "feature_type": "multi_hot",
+      "hash_bucket_size": 256,
+      "hash_bucket_offset": 3512,
+      "max_len": 6,
+      "delimiter": ",",
+      "value_delimiter": ":"
+    },
+    {
+      "name": "mh_004",
+      "feature_type": "multi_hot",
+      "hash_bucket_size": 256,
+      "hash_bucket_offset": 3768,
+      "max_len": 6,
+      "delimiter": ",",
+      "value_delimiter": ":"
+    },
+    {
+      "name": "mh_005",
+      "feature_type": "multi_hot",
+      "hash_bucket_size": 256,
+      "hash_bucket_offset": 4024,
+      "max_len": 6,
+      "delimiter": ",",
+      "value_delimiter": ":"
+    },
+    {
+      "name": "seq_001",
+      "feature_type": "sequence",
+      "hash_bucket_size": 512,
+      "hash_bucket_offset": 5000,
+      "max_len": 5,
+      "delimiter": ",",
+      "value_delimiter": ":",
+      "side_info": {
+        "cate": {
+          "name": "seq_001_cate",
+          "feature_type": "one_hot",
+          "hash_bucket_size": 128,
+          "hash_bucket_offset": 7000
+        },
+        "brand": {
+          "name": "seq_001_brand",
+          "feature_type": "one_hot",
+          "hash_bucket_size": 128,
+          "hash_bucket_offset": 7128
+        }
+      }
+    },
+    {
+      "name": "seq_002",
+      "feature_type": "sequence",
+      "hash_bucket_size": 512,
+      "hash_bucket_offset": 5512,
+      "max_len": 5,
+      "delimiter": ",",
+      "value_delimiter": ":",
+      "side_info": {
+        "cate": {
+          "name": "seq_002_cate",
+          "feature_type": "one_hot",
+          "hash_bucket_size": 128,
+          "hash_bucket_offset": 7256
+        },
+        "brand": {
+          "name": "seq_002_brand",
+          "feature_type": "one_hot",
+          "hash_bucket_size": 128,
+          "hash_bucket_offset": 7384
+        }
+      }
+    },
+    {
+      "name": "seq_003",
+      "feature_type": "sequence",
+      "hash_bucket_size": 512,
+      "hash_bucket_offset": 6024,
+      "max_len": 5,
+      "delimiter": ",",
+      "value_delimiter": ":",
+      "side_info": {
+        "cate": {
+          "name": "seq_003_cate",
+          "feature_type": "one_hot",
+          "hash_bucket_size": 128,
+          "hash_bucket_offset": 7512
+        },
+        "brand": {
+          "name": "seq_003_brand",
+          "feature_type": "one_hot",
+          "hash_bucket_size": 128,
+          "hash_bucket_offset": 7640
+        }
+      }
+    },
+    {
+      "name": "pretrained_user_emb",
+      "feature_type": "pretrained_embedding",
+      "embedding_dim": 8,
+      "fill_missing": true,
+      "l2_normalize": true
+    },
+    {
+      "name": "pretrained_item_emb",
+      "feature_type": "pretrained_embedding",
+      "embedding_dim": 8,
+      "fill_missing": true,
+      "l2_normalize": true
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+.venv/
+.cache/
+__pycache__/
+*.py[cod]
+
+checkpoints/
+exports/
+runs/
+
+.DS_Store

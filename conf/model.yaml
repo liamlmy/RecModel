@@ -1,0 +1,37 @@
+model:
+  # num_features 为空时会从 train/valid/test 自动推断。padding ID 固定为 0。
+  num_features:
+  embedding_dim: 16
+  task_names: ["click", "convert"]
+  dnn_input_mode: "pool"  # pool 或 flatten
+  dnn_hidden_units: [128, 64]
+  activation: "relu"
+  dropout: 0.1
+  # DNN/MMOE/tower 中的归一化层：none、batchnorm、layernorm、rmsnorm。
+  norm_type: "none"
+  use_batch_norm: false
+  # 可选梯度截断位置，默认空列表。可选值包括：
+  # embeddings、linear_terms、linear_logit、senet、rankmixer、self_attention、
+  # feature_interaction、fm_vector、fm_logit、dnn_input、pepnet、lhuc、mmoe、deep_logit。
+  stop_gradient: []
+
+  # 多目标默认使用 MMOE；单目标可关闭。
+  use_mmoe: true
+  mmoe_num_experts: 4
+  mmoe_expert_hidden_units: [128, 64]
+  mmoe_expert_output_dim: 64
+  tower_hidden_units: [64, 32]
+
+  # 可选结构层。注意 SENet/RankMixer 需要固定 max_features_per_sample。
+  use_senet: true
+  use_lhuc: false
+  use_pepnet: false
+  use_rankmixer: false
+  rankmixer_layers: 2
+  rankmixer_token_dim: 64
+  rankmixer_channel_dim: 128
+
+  # 可选自注意力层。use_flash_attention=true 时走 PyTorch SDPA，满足条件会使用 flash kernel。
+  use_self_attention: false
+  attention_num_heads: 4
+  use_flash_attention: false

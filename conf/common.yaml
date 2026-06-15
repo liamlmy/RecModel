@@ -1,0 +1,76 @@
+seed: 2026
+
+storage:
+  # 输入数据来源类型：local 或 hdfs。
+  input_type: local
+  # 输出路径类型：local 或 hdfs。当前训练产物先写本地；HDFS 可由部署脚本同步。
+  output_type: local
+  # HDFS 命令入口，input_type=hdfs 时用于 `hdfs dfs -get`。
+  hdfs_cmd: hdfs
+  # HDFS 数据拉取到本地后的缓存目录。
+  local_cache_dir: .cache/hdfs
+
+data:
+  # libsvm 格式。单目标示例：1 1:1 3:0.2
+  # 多目标示例：1,0 1:1 3:0.2
+  path_type: local
+  train_path: data/train.libsvm
+  valid_path: data/valid.libsvm
+  test_path: data/test.libsvm
+  label_separator: ","
+  max_features_per_sample: 32
+  train_sample_rate: 1.0
+  valid_sample_rate: 1.0
+  test_sample_rate: 1.0
+  negative_sample_rate: 1.0
+
+loader:
+  batch_size: 32
+  num_workers: 0
+  pin_memory: true
+  drop_last: false
+  persistent_workers: false
+
+train:
+  device: "cuda"
+  epochs: 3
+  learning_rate: 0.001
+  weight_decay: 0.00001
+  log_interval: 20
+  checkpoint_dir: checkpoints
+  best_metric: auc
+  early_stop_patience: 3
+  export_after_train: true
+  cudnn_benchmark: true
+
+  # 混合精度。L20/Ada 环境建议优先尝试 bfloat16；如果数值或依赖不支持，可改 float16。
+  use_amp: true
+  amp_dtype: "bfloat16"  # float16 或 bfloat16
+  torch_compile: false
+
+  # 多目标二分类 loss。默认 false 使用 BCEWithLogitsLoss；true 使用 Sigmoid Focal Loss。
+  use_focal_loss: false
+  focal_gamma: 2.0
+  # focal_alpha 可配置为标量列表，每个任务一个 alpha，例如 [0.25, 0.5]。
+  focal_alpha:
+  # task_weights 可给不同目标加权，例如主目标 click=1.0，稀疏目标 convert=2.0。
+  task_weights:
+  loss_reduction: "mean"
+  # 训练 early step 的 loss warmup。开启后仅缩放训练反传 loss，验证/测试不受影响。
+  loss_warmup:
+    enabled: false
+    steps: 100
+    start_factor: 0.1
+    end_factor: 1.0
+
+export:
+  export_dir: exports
+
+debug:
+  tensorboard:
+    # TensorBoard 使用与否由 enabled 控制；false 时不创建 SummaryWriter。
+    enabled: true
+    log_dir: runs/model
+    # step 级日志频率。直方图较重，建议训练大模型时调大或关闭。
+    log_interval: 20
+    log_histograms: false
