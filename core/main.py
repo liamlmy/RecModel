@@ -571,12 +571,15 @@ def train(config: Dict) -> None:
     )
     criterion = build_loss(config, device)
     loss_warmup_scheduler = build_loss_warmup_scheduler(train_cfg)
+
+    # 是否使用tensorboard
     writer = build_summary_writer(config)
     tb_cfg = config.get("debug", {}).get("tensorboard", {})
     tb_log_interval = int(tb_cfg.get("log_interval", train_cfg.get("log_interval", 100)))
     tb_log_histograms = bool(tb_cfg.get("log_histograms", False))
     global_step = 0
 
+    # 是否使用混合精度训练
     use_amp = bool(train_cfg.get("use_amp", False))
     amp_dtype = torch.bfloat16 if train_cfg.get("amp_dtype", "float16") == "bfloat16" else torch.float16
     scaler = GradScaler("cuda", enabled=use_amp and device.type == "cuda" and amp_dtype == torch.float16)
@@ -588,7 +591,7 @@ def train(config: Dict) -> None:
     bad_epochs = 0
 
     try:
-        for epoch in range(1, int(train_cfg.get("epochs", 5)) + 1):
+        for epoch in range(1, int(train_cfg.get("epochs", 3)) + 1):
             train_loss, train_metrics, global_step = run_one_epoch(
                 model,
                 dataloaders["train"],
