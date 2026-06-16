@@ -7,7 +7,7 @@
     "numeric": 20,
     "one_hot": 10,
     "multi_hot": 5,
-    "sequence": 3,
+    "sequence": 2,
     "pretrained_embedding": 2
   },
   "feature_specs": [
@@ -269,29 +269,6 @@
           "feature_type": "one_hot",
           "hash_bucket_size": 128,
           "hash_bucket_offset": 7384
-        }
-      }
-    },
-    {
-      "name": "seq_003",
-      "feature_type": "sequence",
-      "hash_bucket_size": 512,
-      "hash_bucket_offset": 6024,
-      "max_len": 5,
-      "delimiter": ",",
-      "value_delimiter": ":",
-      "side_info": {
-        "cate": {
-          "name": "seq_003_cate",
-          "feature_type": "one_hot",
-          "hash_bucket_size": 128,
-          "hash_bucket_offset": 7512
-        },
-        "brand": {
-          "name": "seq_003_brand",
-          "feature_type": "one_hot",
-          "hash_bucket_size": 128,
-          "hash_bucket_offset": 7640
         }
       }
     },

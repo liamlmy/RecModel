@@ -1,7 +1,6 @@
 data:
   format: jsonl
   train_path: data/rich_train.jsonl
-  valid_path: data/rich_valid.jsonl
   test_path: data/rich_test.jsonl
   feature_schema_path: data/rich_feature_schema.json
   label_names: ["click", "convert"]

@@ -17,9 +17,18 @@ from typing import Dict, List, Optional, Sequence
 import torch
 from torch import nn
 
-from core.data import FeatureSpec, build_feature_specs
-from core.structure import LHUC, MMOE, MLP, MultiHeadSelfAttention, PEPNetGate, RankMixer, SENetLayer
-from core.structure import DINAttentionLayer
+from core.data import build_feature_specs
+from core.structure import (
+    FMInteraction,
+    LHUC,
+    MMOE,
+    MLP,
+    MultiHeadSelfAttention,
+    PEPNetGate,
+    RankMixer,
+    SENetLayer,
+    StructuredFeatureInputLayer,
+)
 
 
 class SparseInputLayer(nn.Module):
@@ -44,21 +53,6 @@ class SparseInputLayer(nn.Module):
             "linear_terms": linear_terms,
             "embeddings": embeddings,
         }
-
-
-class FMInteraction(nn.Module):
-    """FM 二阶交叉项。
-
-    标准公式：0.5 * ((sum x)^2 - sum(x^2))。这里返回 [B, D] 的交叉向量，
-    再由任务输出层映射到单/多目标 logits。
-    """
-
-    def forward(self, embeddings: torch.Tensor, mask: Optional[torch.Tensor] = None) -> torch.Tensor:
-        if mask is not None:
-            embeddings = embeddings.masked_fill(~mask.unsqueeze(-1), 0.0)
-        square_of_sum = torch.sum(embeddings, dim=1).pow(2)
-        sum_of_square = torch.sum(embeddings.pow(2), dim=1)
-        return 0.5 * (square_of_sum - sum_of_square)
 
 
 class DeepFM(nn.Module):
@@ -284,209 +278,6 @@ class DeepFM(nn.Module):
         deep_logit = self._maybe_stop_gradient("deep_logit", deep_logit)
 
         return linear_logit + fm_logit + deep_logit + self.bias
-
-
-class StructuredFeatureInputLayer(nn.Module):
-    """结构化推荐特征输入模块。
-
-    处理规则：
-    - dense 数值特征：原始值直接参与 concat，同时投影成 field embedding 供 SENet 使用。
-    - one-hot 特征：查 8/16 维 embedding。
-    - multi-hot 特征：查 8/16 维 embedding 后按权重 pooling。
-    - sequence 特征：item ID + side info embedding 后，经 DIN 或 self-attention 输出 16/32 维向量。
-    - pretrained embedding：直接 concat，同时可投影成 SENet field。
-    """
-
-    def __init__(
-        self,
-        num_features: int,
-        feature_specs: Sequence[FeatureSpec],
-        input_cfg: Dict,
-    ) -> None:
-        super().__init__()
-        self.feature_specs = list(feature_specs)
-        self.dense_specs = [spec for spec in self.feature_specs if spec.feature_type.lower() == "numeric"]
-        self.one_hot_specs = [spec for spec in self.feature_specs if spec.feature_type.lower() == "one_hot"]
-        self.multi_hot_specs = [spec for spec in self.feature_specs if spec.feature_type.lower() == "multi_hot"]
-        self.sequence_specs = [spec for spec in self.feature_specs if spec.feature_type.lower() == "sequence"]
-        self.pretrained_specs = [spec for spec in self.feature_specs if spec.feature_type.lower() == "pretrained_embedding"]
-
-        self.one_hot_dim = int(input_cfg.get("one_hot_embedding_dim", 16))
-        self.multi_hot_dim = int(input_cfg.get("multi_hot_embedding_dim", 16))
-        self.sequence_dim = int(input_cfg.get("sequence_embedding_dim", 32))
-        self.senet_field_dim = int(input_cfg.get("senet_field_dim", 16))
-        self.sequence_attention_type = str(input_cfg.get("sequence_attention_type", "din")).lower()
-        self.use_input_senet = bool(input_cfg.get("use_senet", False))
-        if self.one_hot_dim not in {8, 16}:
-            raise ValueError("model.input.one_hot_embedding_dim 仅支持 8 或 16")
-        if self.multi_hot_dim not in {8, 16}:
-            raise ValueError("model.input.multi_hot_embedding_dim 仅支持 8 或 16")
-        if self.sequence_dim not in {16, 32}:
-            raise ValueError("model.input.sequence_embedding_dim 仅支持 16 或 32")
-
-        self.one_hot_embedding = nn.Embedding(num_features, self.one_hot_dim, padding_idx=0)
-        self.multi_hot_embedding = nn.Embedding(num_features, self.multi_hot_dim, padding_idx=0)
-        self.sequence_embedding = nn.Embedding(num_features, self.sequence_dim, padding_idx=0)
-        self.sequence_side_embedding = nn.Embedding(num_features, self.sequence_dim, padding_idx=0)
-        nn.init.xavier_uniform_(self.one_hot_embedding.weight)
-        nn.init.xavier_uniform_(self.multi_hot_embedding.weight)
-        nn.init.xavier_uniform_(self.sequence_embedding.weight)
-        nn.init.xavier_uniform_(self.sequence_side_embedding.weight)
-
-        pretrained_dim = sum(max(1, int(spec.embedding_dim)) for spec in self.pretrained_specs)
-        self.non_sequence_dim = (
-            len(self.dense_specs)
-            + len(self.one_hot_specs) * self.one_hot_dim
-            + len(self.multi_hot_specs) * self.multi_hot_dim
-            + pretrained_dim
-        )
-        self.raw_output_dim = self.non_sequence_dim + len(self.sequence_specs) * self.sequence_dim
-
-        self.sequence_query = nn.Linear(max(1, self.non_sequence_dim), self.sequence_dim)
-        if self.sequence_attention_type == "din":
-            self.sequence_attentions = nn.ModuleDict(
-                {spec.name: DINAttentionLayer(self.sequence_dim) for spec in self.sequence_specs}
-            )
-            self.sequence_self_attentions = nn.ModuleDict()
-        elif self.sequence_attention_type in {"attention", "self_attention"}:
-            self.sequence_attentions = nn.ModuleDict()
-            self.sequence_self_attentions = nn.ModuleDict(
-                {
-                    spec.name: MultiHeadSelfAttention(
-                        self.sequence_dim,
-                        num_heads=int(input_cfg.get("sequence_attention_num_heads", 4)),
-                        use_flash_attention=bool(input_cfg.get("use_flash_attention", False)),
-                    )
-                    for spec in self.sequence_specs
-                }
-            )
-        else:
-            raise ValueError("sequence_attention_type 仅支持 din/attention/self_attention")
-
-        self.field_count = (
-            len(self.dense_specs)
-            + len(self.one_hot_specs)
-            + len(self.multi_hot_specs)
-            + len(self.sequence_specs)
-            + len(self.pretrained_specs)
-        )
-        self.dense_projectors = nn.ModuleDict(
-            {spec.name: nn.Linear(1, self.senet_field_dim) for spec in self.dense_specs}
-        )
-        self.one_hot_projectors = nn.ModuleDict(
-            {
-                spec.name: nn.Linear(self.one_hot_dim, self.senet_field_dim)
-                for spec in self.one_hot_specs
-            }
-        )
-        self.multi_hot_projectors = nn.ModuleDict(
-            {
-                spec.name: nn.Linear(self.multi_hot_dim, self.senet_field_dim)
-                for spec in self.multi_hot_specs
-            }
-        )
-        self.sequence_projectors = nn.ModuleDict(
-            {
-                spec.name: nn.Linear(self.sequence_dim, self.senet_field_dim)
-                for spec in self.sequence_specs
-            }
-        )
-        self.pretrained_projectors = nn.ModuleDict(
-            {
-                spec.name: nn.Linear(max(1, int(spec.embedding_dim)), self.senet_field_dim)
-                for spec in self.pretrained_specs
-            }
-        )
-        self.senet = SENetLayer(self.field_count) if self.use_input_senet and self.field_count > 0 else None
-        self.output_dim = self.field_count * self.senet_field_dim if self.senet is not None else self.raw_output_dim
-
-    def _pool_multi_hot(self, feature: Dict[str, torch.Tensor]) -> torch.Tensor:
-        ids = feature["feature_ids"]
-        values = feature["feature_values"].unsqueeze(-1)
-        mask = feature["mask"].unsqueeze(-1)
-        embeddings = self.multi_hot_embedding(ids) * values
-        embeddings = embeddings.masked_fill(~mask, 0.0)
-        denom = mask.sum(dim=1).clamp_min(1).to(embeddings.dtype)
-        return embeddings.sum(dim=1) / denom
-
-    def _sequence_repr(
-        self,
-        spec: FeatureSpec,
-        sequence_batch: Dict[str, torch.Tensor],
-        query_context: torch.Tensor,
-    ) -> torch.Tensor:
-        item_ids = sequence_batch["item_feature_ids"]
-        item_values = sequence_batch["item_feature_values"].unsqueeze(-1)
-        mask = sequence_batch["item_mask"]
-        seq_embeddings = self.sequence_embedding(item_ids) * item_values
-        for side_ids in sequence_batch.get("side_feature_ids", {}).values():
-            seq_embeddings = seq_embeddings + self.sequence_side_embedding(side_ids)
-        seq_embeddings = seq_embeddings.masked_fill(~mask.unsqueeze(-1), 0.0)
-
-        if spec.name in self.sequence_attentions:
-            query = self.sequence_query(query_context)
-            return self.sequence_attentions[spec.name](query, seq_embeddings, mask)
-
-        attended = self.sequence_self_attentions[spec.name](seq_embeddings, mask)
-        denom = mask.sum(dim=1, keepdim=True).clamp_min(1).to(attended.dtype)
-        return attended.masked_fill(~mask.unsqueeze(-1), 0.0).sum(dim=1) / denom
-
-    def forward(self, batch: Dict[str, torch.Tensor]) -> torch.Tensor:
-        batch_size = batch["labels"].size(0)
-        device = batch["labels"].device
-        raw_vectors: List[torch.Tensor] = []
-        field_vectors: List[torch.Tensor] = []
-
-        dense_tensor = batch.get("dense_features")
-        dense_names = batch.get("dense_feature_names", [])
-        dense_by_name = {}
-        if dense_tensor is not None:
-            dense_by_name = {name: dense_tensor[:, idx : idx + 1] for idx, name in enumerate(dense_names)}
-        for spec in self.dense_specs:
-            value = dense_by_name.get(spec.name, torch.zeros(batch_size, 1, device=device))
-            raw_vectors.append(value)
-            field_vectors.append(self.dense_projectors[spec.name](value))
-
-        for spec in self.one_hot_specs:
-            ids = batch.get("one_hot_feature_ids", {}).get(spec.name)
-            if ids is None:
-                ids = torch.zeros(batch_size, dtype=torch.long, device=device)
-            vector = self.one_hot_embedding(ids)
-            raw_vectors.append(vector)
-            field_vectors.append(self.one_hot_projectors[spec.name](vector))
-
-        for spec in self.multi_hot_specs:
-            feature = batch.get("multi_hot_features", {}).get(spec.name)
-            if feature is None:
-                vector = torch.zeros(batch_size, self.multi_hot_dim, device=device)
-            else:
-                vector = self._pool_multi_hot(feature)
-            raw_vectors.append(vector)
-            field_vectors.append(self.multi_hot_projectors[spec.name](vector))
-
-        for spec in self.pretrained_specs:
-            vector = batch.get("pretrained_embeddings", {}).get(spec.name)
-            expected_dim = max(1, int(spec.embedding_dim))
-            if vector is None:
-                vector = torch.zeros(batch_size, expected_dim, device=device)
-            raw_vectors.append(vector)
-            field_vectors.append(self.pretrained_projectors[spec.name](vector))
-
-        query_context = torch.cat(raw_vectors, dim=-1) if raw_vectors else torch.zeros(batch_size, 1, device=device)
-        for spec in self.sequence_specs:
-            sequence_batch = batch.get("sequences", {}).get(spec.name)
-            if sequence_batch is None:
-                vector = torch.zeros(batch_size, self.sequence_dim, device=device)
-            else:
-                vector = self._sequence_repr(spec, sequence_batch, query_context)
-            raw_vectors.append(vector)
-            field_vectors.append(self.sequence_projectors[spec.name](vector))
-
-        if self.senet is not None:
-            field_tensor = torch.stack(field_vectors, dim=1)
-            field_tensor = self.senet(field_tensor)
-            return field_tensor.flatten(start_dim=1)
-        return torch.cat(raw_vectors, dim=-1)
 
 
 class StructuredInputMMOEModel(nn.Module):

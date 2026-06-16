@@ -17,15 +17,13 @@ data:
   # 多目标示例：1,0 1:1 3:0.2
   path_type: local
   train_path: data/train.libsvm
-  valid_path: data/valid.libsvm
   test_path: data/test.libsvm
   # 使用 jsonl 时改成 rich_*.jsonl，并配置 feature_schema_path/label_names。
   feature_schema_path: data/rich_feature_schema.json
   label_names: ["click", "convert"]
   label_separator: ","
-  max_features_per_sample: 32
+  max_features_per_sample: 128
   train_sample_rate: 1.0
-  valid_sample_rate: 1.0
   test_sample_rate: 1.0
   negative_sample_rate: 1.0
 
