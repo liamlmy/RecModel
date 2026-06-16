@@ -18,7 +18,7 @@ python3.12 -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip
 pip install torch==2.11.0 torchvision==0.26.0 torchaudio==2.11.0 --index-url https://download.pytorch.org/whl/cu128
-pip install PyYAML tensorboard
+pip install PyYAML tensorboard pyarrow
 ```
 
 如果服务器驱动只适配 CUDA 12.6，可以改用 PyTorch 官方 cu126 wheel。
@@ -30,7 +30,7 @@ Conda，建议创建独立环境：
 conda create -n deepfm-py312 python=3.12 -y
 conda activate deepfm-py312
 pip install torch==2.11.0 torchvision==0.26.0 torchaudio==2.11.0 --index-url https://download.pytorch.org/whl/cu128
-pip install PyYAML tensorboard
+pip install PyYAML tensorboard pyarrow
 ```
 
 ## 项目结构
@@ -43,12 +43,19 @@ pip install PyYAML tensorboard
 ├── core/data.py         # libsvm 解析、采样、label/feature 识别、DataLoader
 ├── conf/common.yaml     # 数据路径、路径类型、训练、导出、debug 等通用配置
 ├── conf/model.yaml      # 模型配置，当前包含结构化 input + SENet + MMOE 示例
+├── conf/parquet_libsvm.yaml # HDFS parquet-libsvm 输入覆盖配置示例
 ├── data/*.libsvm        # 可直接运行的小样本数据
 ├── checkpoints/         # 训练 checkpoint 输出目录
 └── exports/             # TorchScript 导出目录
 ```
 
 ## 数据格式
+
+项目支持三类输入：
+
+- `libsvm`：本地/HDFS 文本 libsvm，格式与 `data/train.libsvm`、`data/test.libsvm` 一致。
+- `parquet_libsvm` 或 `parquet`：本地/HDFS parquet 承载的 libsvm 样本。
+- `jsonl`：结构化特征样本，格式与 `data/rich_train.jsonl`、`data/rich_test.jsonl` 一致。
 
 单目标 libsvm：
 
@@ -68,8 +75,9 @@ pip install PyYAML tensorboard
 
 ```yaml
 data:
+  format: libsvm
   label_separator: ","
-  path_type: local        # local 或 hdfs
+  path_type: local        # local 或 hdfs，也可用 train_path_type/test_path_type 单独覆盖
   train_path: data/train.libsvm
 model:
   task_names: ["click", "convert"]
@@ -89,6 +97,50 @@ model:
 - `gauc`：按 `traceid` 分组加权平均 AUC
 - `uauc`：按 `userid` 分组加权平均 AUC
 - 多目标场景下也会记录 `click_auc`、`click_gauc`、`click_uauc` 等任务级指标
+
+## Parquet LibSVM 输入
+
+parquet 数据可以放在本地或 HDFS。训练代码会按 `data.path_type` 判断来源；
+当来源是 HDFS 时，会先执行 `hdfs dfs -get -f` 拉取到 `storage.local_cache_dir`，
+再用 `pyarrow` 读取 parquet 文件或目录。
+
+方式一：parquet 中某列存完整 libsvm 文本，内容与 `data/train.libsvm` 的单行一致：
+
+```yaml
+data:
+  format: parquet_libsvm
+  path_type: hdfs
+  train_path: hdfs:///path/to/train_parquet
+  test_path: hdfs:///path/to/test_parquet
+  parquet:
+    libsvm_column: libsvm
+```
+
+方式二：parquet 拆列存储：
+
+```yaml
+data:
+  format: parquet_libsvm
+  path_type: hdfs
+  train_path: hdfs:///path/to/train_parquet
+  test_path: data/test_parquet
+  test_path_type: local
+  parquet:
+    label_column: label              # 可为 "1,0" 或数组 [1, 0]
+    # label_columns: ["click", "convert"]
+    feature_column: features          # 可为 "12:1 35:0.8"、list、map 或 struct list
+    # feature_id_column: feature_ids  # 与 feature_value_column 配对使用
+    # feature_value_column: feature_values
+    trace_id_column: traceid
+    user_id_column: userid
+    feature_id_offset: 1
+```
+
+直接套用示例覆盖配置：
+
+```bash
+python -m core.main --config conf/parquet_libsvm.yaml --mode train
+```
 
 ## 结构化特征样本
 
