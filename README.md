@@ -1,8 +1,8 @@
-# PyTorch DeepFM 训练工程
+# 精排模型训练工程
 
-这是一个面向推荐排序场景的 DeepFM 训练模板，支持 libsvm 数据、多目标/单目标训练、混合精度、可选 FlashAttention 结构层，以及 MMOE、DIN Attention、PEPNet、SENet、LHUC、RankMixer 等常见模块。
+这是一个面向排序场景的训练模板，支持 libsvm 与 JSONL 数据、多目标/单目标训练、混合精度、可选 FlashAttention 结构层，以及 MMOE、DIN Attention、PEPNet、SENet、LHUC、RankMixer 等常见模块。
 
-## 推荐环境
+## 环境配置
 
 适配 NVIDIA L20 GPU 的推荐组合：
 
@@ -42,13 +42,11 @@ pip install PyYAML tensorboard
 ├── core/structure.py    # DIN Attention、MMOE、PEPNet、Gate、Attention、RankMixer、SENet、LHUC
 ├── core/data.py         # libsvm 解析、采样、label/feature 识别、DataLoader
 ├── conf/common.yaml     # 数据路径、路径类型、训练、导出、debug 等通用配置
-├── conf/model.yaml      # 模型结构配置
+├── conf/model.yaml      # 模型配置，当前包含结构化 input + SENet + MMOE 示例
 ├── data/*.libsvm        # 可直接运行的小样本数据
 ├── checkpoints/         # 训练 checkpoint 输出目录
 └── exports/             # TorchScript 导出目录
 ```
-
-`old/` 目录中的旧内容不会被当前代码引用。
 
 ## 数据格式
 
@@ -114,6 +112,21 @@ model:
 `processed_feature_collate` 读取。预训练 embedding 不进入 ID embedding 表，
 会以 `batch["pretrained_embeddings"][name] = Tensor[B, D]` 的形式输出。
 
+结构化模型链路可以通过 `model.model_type: mymodel` 开启：
+
+- dense 数值特征：原始值直接拼接，同时投影成 SENet field。
+- one-hot 特征：查 8 或 16 维 embedding。
+- multi-hot 特征：查 8 或 16 维 embedding 后按 mask/权重 pooling。
+- 序列特征：主 ID 与 side info 共同 embedding，通过 DIN 或 self-attention 输出 16 或 32 维向量。
+- 预训练纯 embedding 特征：不查表，直接 concat。
+- input 模块之后可选 `model.input.use_senet: true`，SENet 输出再进入 MMOE 和各任务 tower。
+
+直接运行结构化 input 模块示例：
+
+```bash
+python -m core.main --mode train
+```
+
 ## 训练
 
 ```bash
@@ -152,8 +165,8 @@ python -m core.main --config conf/experiment_override.yaml --mode train
 
 ## 配置拆分
 
-`conf/model.yaml` 只放模型本身相关配置，例如 embedding 维度、DNN hidden units、
-MMOE、SENet、FlashAttention、gradient stop 等。
+`conf/model.yaml` 放当前模型实验的覆盖配置；结构化 MMOE 示例已经合并到这里，
+包括 rich JSONL 数据路径、checkpoint/export/log 目录，以及 input/MMOE/tower 等模型结构。
 
 `conf/common.yaml` 放非模型结构配置，包括：
 
@@ -183,6 +196,7 @@ data:
 
 ```yaml
 model:
+  model_type: "deepfm"         # deepfm 或 mymodel
   dnn_input_mode: "pool"      # pool 更适合变长 libsvm；flatten 更接近传统固定 field DeepFM
   norm_type: "none"           # none、batchnorm、layernorm、rmsnorm
   use_mmoe: true              # 多目标训练建议开启
@@ -193,6 +207,15 @@ model:
   use_self_attention: false   # 在 DeepFM 的 embedding 序列上增加多头自注意力
   use_flash_attention: false  # use_self_attention=true 时可尝试启用 PyTorch SDPA flash kernel
   stop_gradient: []           # 例如 ["fm_vector", "dnn_input"]，用于局部梯度截断
+  input:
+    one_hot_embedding_dim: 16
+    multi_hot_embedding_dim: 16
+    sequence_embedding_dim: 32
+    sequence_attention_type: "din"
+    sequence_attention_num_heads: 4
+    use_flash_attention: false
+    use_senet: false
+    senet_field_dim: 16
 
 train:
   use_amp: true
