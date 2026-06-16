@@ -88,13 +88,22 @@ def set_seed(seed: int) -> None:
     torch.cuda.manual_seed_all(seed)
 
 
-def move_batch_to_device(batch: Dict[str, Any], device: torch.device) -> Dict[str, Any]:
-    """把 batch 中的 tensor 移动到设备；字符串分组键等非 tensor 原样保留。"""
+def move_to_device(value: Any, device: torch.device) -> Any:
+    """递归移动 batch 中的 tensor；字符串/list 等元信息原样保留。"""
 
-    return {
-        key: value.to(device, non_blocking=True) if isinstance(value, torch.Tensor) else value
-        for key, value in batch.items()
-    }
+    if isinstance(value, torch.Tensor):
+        return value.to(device, non_blocking=True)
+    if isinstance(value, dict):
+        return {key: move_to_device(item, device) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return tuple(move_to_device(item, device) for item in value)
+    if isinstance(value, list) and value and isinstance(value[0], torch.Tensor):
+        return [move_to_device(item, device) for item in value]
+    return value
+
+
+def move_batch_to_device(batch: Dict[str, Any], device: torch.device) -> Dict[str, Any]:
+    return {key: move_to_device(value, device) for key, value in batch.items()}
 
 
 def build_summary_writer(config: Dict):
@@ -353,6 +362,23 @@ def unwrap_model(model: nn.Module) -> nn.Module:
     return getattr(model, "_orig_mod", model)
 
 
+def model_forward(model: nn.Module, batch: Dict[str, Any]) -> torch.Tensor:
+    """兼容不同输入协议的模型前向。
+
+    - DeepFM 使用 libsvm 稀疏输入：feature_ids/feature_values/mask。
+    - StructuredInputMMOEModel 直接消费完整 batch，包含 dense、one-hot、
+      multi-hot、sequence、pretrained embedding 等结构化字段。
+    """
+
+    if getattr(unwrap_model(model), "expects_batch", False):
+        return model(batch)
+    return model(
+        feature_ids=batch["feature_ids"],
+        feature_values=batch["feature_values"],
+        mask=batch["mask"],
+    )
+
+
 def resolve_device(device_name: str) -> torch.device:
     """解析训练设备。
 
@@ -448,11 +474,7 @@ def run_one_epoch(
 
         with torch.set_grad_enabled(is_train):
             with autocast(device_type=device.type, enabled=use_amp and device.type == "cuda", dtype=amp_dtype):
-                logits = model(
-                    feature_ids=batch["feature_ids"],
-                    feature_values=batch["feature_values"],
-                    mask=batch["mask"],
-                )
+                logits = model_forward(model, batch)
                 loss = criterion(logits, labels)
                 if is_train and loss_warmup_scheduler is not None:
                     warmup_factor = loss_warmup_scheduler.step()
@@ -500,7 +522,8 @@ def run_one_epoch(
     avg_loss = total_loss / max(total_count, 1)
     labels_tensor = torch.cat(all_labels, dim=0)
     logits_tensor = torch.cat(all_logits, dim=0)
-    task_names = getattr(model, "task_names", [f"task_{i}" for i in range(labels_tensor.shape[1])])
+    raw_model = unwrap_model(model)
+    task_names = getattr(raw_model, "task_names", [f"task_{i}" for i in range(labels_tensor.shape[1])])
     metrics = compute_metrics(
         labels_tensor,
         logits_tensor,
@@ -707,14 +730,24 @@ def export_model(config: Dict, checkpoint: str | Path) -> None:
     model = build_model(export_config).to(device)
     model.load_state_dict(checkpoint_data["model_state_dict"])
     model.eval()
+    torch.save(
+        {
+            "model_state_dict": model.state_dict(),
+            "config": export_config,
+        },
+        export_dir / "model_state.pt",
+    )
 
-    max_features = int(export_config["model"].get("max_features_per_sample", 64))
-    example_feature_ids = torch.ones(1, max_features, dtype=torch.long)
-    example_feature_values = torch.ones(1, max_features, dtype=torch.float32)
-    example_mask = torch.ones(1, max_features, dtype=torch.bool)
+    if not getattr(model, "expects_batch", False):
+        max_features = int(export_config["model"].get("max_features_per_sample", 64))
+        example_feature_ids = torch.ones(1, max_features, dtype=torch.long)
+        example_feature_values = torch.ones(1, max_features, dtype=torch.float32)
+        example_mask = torch.ones(1, max_features, dtype=torch.bool)
 
-    traced = torch.jit.trace(model, (example_feature_ids, example_feature_values, example_mask))
-    traced.save(str(export_dir / "deepfm_traced.pt"))
+        traced = torch.jit.trace(model, (example_feature_ids, example_feature_values, example_mask))
+        traced.save(str(export_dir / "deepfm_traced.pt"))
+    else:
+        print("结构化 batch 模型已导出 state_dict；TorchScript trace 已跳过。")
 
     with (export_dir / "config.json").open("w", encoding="utf-8") as f:
         json.dump(export_config, f, ensure_ascii=False, indent=2)

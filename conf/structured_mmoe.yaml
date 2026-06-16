@@ -1,0 +1,44 @@
+data:
+  format: jsonl
+  train_path: data/rich_train.jsonl
+  valid_path: data/rich_valid.jsonl
+  test_path: data/rich_test.jsonl
+  feature_schema_path: data/rich_feature_schema.json
+  label_names: ["click", "convert"]
+  max_features_per_sample: 80
+  multi_hot_normalize: mean
+
+loader:
+  batch_size: 8
+
+train:
+  epochs: 3
+  checkpoint_dir: checkpoints/structured_mmoe
+  export_after_train: true
+
+export:
+  export_dir: exports/structured_mmoe
+
+debug:
+  tensorboard:
+    log_dir: runs/model/structured_mmoe
+
+model:
+  model_type: structured_mmoe
+  task_names: ["click", "convert"]
+  norm_type: layernorm
+  use_mmoe: true
+  mmoe_num_experts: 4
+  mmoe_expert_hidden_units: [128, 64]
+  mmoe_expert_output_dim: 64
+  tower_hidden_units: [64, 32]
+  stop_gradient: []
+  input:
+    one_hot_embedding_dim: 16
+    multi_hot_embedding_dim: 16
+    sequence_embedding_dim: 32
+    sequence_attention_type: din
+    sequence_attention_num_heads: 4
+    use_flash_attention: false
+    use_senet: true
+    senet_field_dim: 16

@@ -1,4 +1,6 @@
 model:
+  # deepfm: 兼容 libsvm 稀疏输入；structured_mmoe: 使用结构化 input 模块 + SENet + MMOE。
+  model_type: deepfm
   # num_features 为空时会从 train/valid/test 自动推断。padding ID 固定为 0。
   num_features:
   embedding_dim: 16
@@ -35,3 +37,16 @@ model:
   use_self_attention: false
   attention_num_heads: 4
   use_flash_attention: false
+
+  # structured_mmoe 的输入模块配置。切换 model_type=structured_mmoe 且 data.format=jsonl 后生效。
+  input:
+    # one-hot/multi-hot 支持 8 或 16 维；序列 DIN/attention 输出支持 16 或 32 维。
+    one_hot_embedding_dim: 16
+    multi_hot_embedding_dim: 16
+    sequence_embedding_dim: 32
+    sequence_attention_type: din  # din、attention 或 self_attention
+    sequence_attention_num_heads: 4
+    use_flash_attention: false
+    # input 模块之后可接 SENet；开启后所有 field 会先投影到 senet_field_dim 再重标定并 flatten。
+    use_senet: false
+    senet_field_dim: 16

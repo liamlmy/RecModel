@@ -153,6 +153,9 @@ class ProcessedFeatureSample:
 
     labels: List[float]
     sparse: SparseFeatureBundle
+    dense_features: Dict[str, float]
+    one_hot_features: Dict[str, int]
+    multi_hot_features: Dict[str, SparseFeatureBundle]
     sequences: Dict[str, SequenceFeatureBundle]
     pretrained_embeddings: Dict[str, List[float]]
 
@@ -484,6 +487,9 @@ def process_raw_feature_sample(
     labels = [float(raw_sample[name]) for name in label_names if name in raw_sample]
     sparse_ids: List[int] = []
     sparse_values: List[float] = []
+    dense_features: Dict[str, float] = {}
+    one_hot_features: Dict[str, int] = {}
+    multi_hot_features: Dict[str, SparseFeatureBundle] = {}
     sequences: Dict[str, SequenceFeatureBundle] = {}
     pretrained_embeddings: Dict[str, List[float]] = {}
 
@@ -491,11 +497,14 @@ def process_raw_feature_sample(
         raw_value = raw_sample.get(spec.name)
         feature_type = spec.feature_type.lower()
         if feature_type == "numeric":
+            dense_features[spec.name] = 0.0 if raw_value is None or raw_value == "" else float(raw_value)
             bundle = process_numeric_feature(raw_value, spec)
         elif feature_type == "one_hot":
             bundle = process_one_hot_feature(raw_value, spec)
+            one_hot_features[spec.name] = bundle.feature_ids[0] if bundle.feature_ids else 0
         elif feature_type == "multi_hot":
             bundle = process_multi_hot_feature(raw_value, spec, normalize=multi_hot_normalize)
+            multi_hot_features[spec.name] = bundle
         elif feature_type == "sequence":
             sequences[spec.name] = process_sequence_feature(raw_value, spec)
             continue
@@ -511,6 +520,9 @@ def process_raw_feature_sample(
     return ProcessedFeatureSample(
         labels=labels,
         sparse=SparseFeatureBundle(sparse_ids, sparse_values),
+        dense_features=dense_features,
+        one_hot_features=one_hot_features,
+        multi_hot_features=multi_hot_features,
         sequences=sequences,
         pretrained_embeddings=pretrained_embeddings,
     )
@@ -600,12 +612,20 @@ class RawFeatureDataset(Dataset):
             if len(sample.labels) != label_dim:
                 raise ValueError("同一个 JSONL 数据文件内 label 维度不一致")
 
+        def max_feature_id(sample: ProcessedFeatureSample) -> int:
+            """统计结构化样本中所有需要查 embedding 的最大 ID。"""
+
+            max_id = max(sample.sparse.feature_ids) if sample.sparse.feature_ids else 0
+            for sequence in sample.sequences.values():
+                if sequence.item_feature_ids:
+                    max_id = max(max_id, max(sequence.item_feature_ids))
+                for side_ids in sequence.side_feature_ids.values():
+                    if side_ids:
+                        max_id = max(max_id, max(side_ids))
+            return max_id
+
         self.info = DataInfo(
-            num_features=max(
-                (max(sample.sparse.feature_ids) if sample.sparse.feature_ids else 0)
-                for sample in self.samples
-            )
-            + 1,
+            num_features=max(max_feature_id(sample) for sample in self.samples) + 1,
             label_dim=label_dim,
             max_nnz=max(len(sample.sparse.feature_ids) for sample in self.samples),
             num_samples=len(self.samples),
@@ -744,6 +764,46 @@ def processed_feature_collate(
         [sample.pretrained_embeddings for sample in samples],
         embedding_dims=embedding_dims,
     )
+
+    dense_names = sorted({name for sample in samples for name in sample.dense_features})
+    dense_values = torch.zeros(len(samples), len(dense_names), dtype=torch.float32)
+    for row, sample in enumerate(samples):
+        for col, name in enumerate(dense_names):
+            dense_values[row, col] = float(sample.dense_features.get(name, 0.0))
+    batch["dense_features"] = dense_values
+    batch["dense_feature_names"] = dense_names
+
+    one_hot_names = sorted({name for sample in samples for name in sample.one_hot_features})
+    batch["one_hot_feature_ids"] = {
+        name: torch.tensor([sample.one_hot_features.get(name, 0) for sample in samples], dtype=torch.long)
+        for name in one_hot_names
+    }
+
+    multi_hot_names = sorted({name for sample in samples for name in sample.multi_hot_features})
+    multi_hot_features: Dict[str, Dict[str, torch.Tensor]] = {}
+    for name in multi_hot_names:
+        max_len_for_name = max(
+            len(sample.multi_hot_features.get(name, SparseFeatureBundle([], [])).feature_ids)
+            for sample in samples
+        )
+        max_len_for_name = max(max_len_for_name, 1)
+        ids = torch.zeros(len(samples), max_len_for_name, dtype=torch.long)
+        values = torch.zeros(len(samples), max_len_for_name, dtype=torch.float32)
+        mask = torch.zeros(len(samples), max_len_for_name, dtype=torch.bool)
+        for row, sample in enumerate(samples):
+            bundle = sample.multi_hot_features.get(name, SparseFeatureBundle([], []))
+            length = min(len(bundle.feature_ids), max_len_for_name)
+            if length == 0:
+                continue
+            ids[row, :length] = torch.tensor(bundle.feature_ids[:length], dtype=torch.long)
+            values[row, :length] = torch.tensor(bundle.feature_values[:length], dtype=torch.float32)
+            mask[row, :length] = True
+        multi_hot_features[name] = {
+            "feature_ids": ids,
+            "feature_values": values,
+            "mask": mask,
+        }
+    batch["multi_hot_features"] = multi_hot_features
     return batch
 
 
@@ -965,8 +1025,67 @@ def build_dataloaders(config: Dict) -> Tuple[Dict[str, DataLoader], DataInfo]:
 
     data_cfg = config.get("data", {})
     loader_cfg = config.get("loader", {})
+    data_format = str(data_cfg.get("format", "libsvm")).lower()
     label_separator = data_cfg.get("label_separator", ",")
     max_features_per_sample = int(data_cfg.get("max_features_per_sample", 0))
+
+    if data_format == "jsonl":
+        schema_path = data_cfg.get("feature_schema_path")
+        if not schema_path:
+            raise ValueError("data.format=jsonl 时必须配置 data.feature_schema_path")
+        schema = json.loads(Path(schema_path).read_text(encoding="utf-8"))
+        feature_specs = build_feature_specs(schema["feature_specs"])
+        label_names = data_cfg.get("label_names", schema.get("label_names", ["label"]))
+        sequence_max_lens = {
+            spec.name: spec.max_len for spec in feature_specs if spec.feature_type.lower() == "sequence"
+        }
+        embedding_dims = {
+            spec.name: spec.embedding_dim
+            for spec in feature_specs
+            if spec.feature_type.lower() == "pretrained_embedding" and spec.embedding_dim > 0
+        }
+
+        raw_datasets: Dict[str, RawFeatureDataset] = {}
+        for split in ("train", "valid", "test"):
+            path = data_cfg.get(f"{split}_path")
+            if not path:
+                continue
+            raw_datasets[split] = RawFeatureDataset(
+                path=prepare_input_path(path, config),
+                feature_specs=feature_specs,
+                label_names=label_names,
+                multi_hot_normalize=data_cfg.get("multi_hot_normalize", "mean"),
+                sample_rate=float(data_cfg.get(f"{split}_sample_rate", 1.0)),
+                max_samples=data_cfg.get(f"{split}_max_samples"),
+                seed=int(config.get("seed", 2026)),
+            )
+
+        if "train" not in raw_datasets:
+            raise ValueError("配置中必须提供 data.train_path")
+
+        data_info = merge_data_info(dataset.info for dataset in raw_datasets.values())
+        dataloaders: Dict[str, DataLoader] = {}
+        for split, dataset in raw_datasets.items():
+            dataloaders[split] = DataLoader(
+                dataset,
+                batch_size=int(loader_cfg.get("batch_size", 1024)),
+                shuffle=(split == "train"),
+                num_workers=int(loader_cfg.get("num_workers", 0)),
+                pin_memory=bool(loader_cfg.get("pin_memory", True)),
+                drop_last=bool(loader_cfg.get("drop_last", False)) if split == "train" else False,
+                collate_fn=lambda samples: processed_feature_collate(
+                    samples,
+                    max_features_per_sample=max_features_per_sample,
+                    sequence_max_lens=sequence_max_lens,
+                    embedding_dims=embedding_dims,
+                ),
+                persistent_workers=bool(loader_cfg.get("persistent_workers", False))
+                and int(loader_cfg.get("num_workers", 0)) > 0,
+            )
+        return dataloaders, data_info
+
+    if data_format != "libsvm":
+        raise ValueError(f"不支持的数据格式: {data_format}")
 
     datasets: Dict[str, LibSVMDataset] = {}
     for split in ("train", "valid", "test"):
