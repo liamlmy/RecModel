@@ -1,5 +1,5 @@
-#!/bin/sh
-set -eu
+#!/usr/bin/env bash
+set -euo pipefail
 
 PROJECT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 cd "${PROJECT_DIR}"
@@ -10,6 +10,8 @@ MODEL_CONFIG="${MODEL_CONFIG:-conf/model.yaml}"
 MODE="${MODE:-train}"
 CHECKPOINT="${CHECKPOINT:-}"
 OVERRIDE_CONFIG="${CONFIG:-}"
+LOG_DIR="${LOG_DIR:-logs}"
+LOG_FILE="${LOG_FILE:-${LOG_DIR}/${MODE}_$(date +%Y%m%d_%H%M%S).log}"
 
 if [ ! -x "${PYTHON_BIN}" ]; then
   echo "Python not found or not executable: ${PYTHON_BIN}" >&2
@@ -32,7 +34,11 @@ if [ -n "${CHECKPOINT}" ]; then
   set -- "$@" "--checkpoint" "${CHECKPOINT}"
 fi
 
+mkdir -p "$(dirname -- "${LOG_FILE}")"
+
 printf "Running:"
 printf " %s" "$@"
 printf "\n"
-exec "$@"
+printf "Log file: %s\n" "${LOG_FILE}"
+
+"$@" 2>&1 | tee "${LOG_FILE}"

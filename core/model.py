@@ -309,9 +309,7 @@ class StructuredFeatureInputLayer(nn.Module):
         self.one_hot_specs = [spec for spec in self.feature_specs if spec.feature_type.lower() == "one_hot"]
         self.multi_hot_specs = [spec for spec in self.feature_specs if spec.feature_type.lower() == "multi_hot"]
         self.sequence_specs = [spec for spec in self.feature_specs if spec.feature_type.lower() == "sequence"]
-        self.pretrained_specs = [
-            spec for spec in self.feature_specs if spec.feature_type.lower() == "pretrained_embedding"
-        ]
+        self.pretrained_specs = [spec for spec in self.feature_specs if spec.feature_type.lower() == "pretrained_embedding"]
 
         self.one_hot_dim = int(input_cfg.get("one_hot_embedding_dim", 16))
         self.multi_hot_dim = int(input_cfg.get("multi_hot_embedding_dim", 16))
@@ -502,7 +500,7 @@ class StructuredInputMMOEModel(nn.Module):
         data_cfg = config.get("data", {})
         schema_path = model_cfg.get("feature_schema_path", data_cfg.get("feature_schema_path"))
         if not schema_path:
-            raise ValueError("structured_mmoe 模型必须配置 data.feature_schema_path 或 model.feature_schema_path")
+            raise ValueError("mymodel 模型必须配置 data.feature_schema_path 或 model.feature_schema_path")
         schema = json.loads(Path(schema_path).read_text(encoding="utf-8"))
         feature_specs = build_feature_specs(schema["feature_specs"])
         self.task_names: List[str] = list(model_cfg.get("task_names", schema.get("label_names", ["label"])))
@@ -560,7 +558,7 @@ def build_model(config: Dict) -> nn.Module:
     """模型构造入口，方便 core.main 或线上服务统一调用。"""
 
     model_type = str(config.get("model", {}).get("model_type", "deepfm")).lower()
-    if model_type == "structured_mmoe":
+    if model_type == "mymodel":
         return StructuredInputMMOEModel(config)
     if model_type != "deepfm":
         raise ValueError(f"不支持的 model.model_type: {model_type}")
