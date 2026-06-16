@@ -4,3 +4,4 @@ torchvision==0.26.0
 torchaudio==2.11.0
 PyYAML>=6.0
 tensorboard>=2.20
+pyarrow>=16.0

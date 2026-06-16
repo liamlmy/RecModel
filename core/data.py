@@ -49,7 +49,19 @@ class LibSVMSample:
     user_id: str = ""
 
 
-def prepare_input_path(path: str | Path, config: Mapping[str, Any]) -> Path:
+def _resolve_input_path_type(config: Mapping[str, Any], split: Optional[str] = None) -> str:
+    """解析输入路径类型，支持全局配置和 train/valid/test 级覆盖。"""
+
+    data_cfg = config.get("data", {})
+    storage_cfg = config.get("storage", {})
+    if split:
+        path_type = data_cfg.get(f"{split}_path_type")
+        if path_type:
+            return str(path_type).lower()
+    return str(data_cfg.get("path_type", storage_cfg.get("input_type", "local"))).lower()
+
+
+def prepare_input_path(path: str | Path, config: Mapping[str, Any], split: Optional[str] = None) -> Path:
     """根据配置把输入路径准备成本地可读路径。
 
     - local: 直接返回原始本地路径。
@@ -59,10 +71,8 @@ def prepare_input_path(path: str | Path, config: Mapping[str, Any]) -> Path:
     """
 
     path_text = str(path)
-    data_cfg = config.get("data", {})
     storage_cfg = config.get("storage", {})
-    path_type = data_cfg.get("path_type", storage_cfg.get("input_type", "local"))
-    path_type = str(path_type).lower()
+    path_type = _resolve_input_path_type(config, split=split)
     if path_type == "local":
         return Path(path_text)
     if path_type != "hdfs":
@@ -70,7 +80,9 @@ def prepare_input_path(path: str | Path, config: Mapping[str, Any]) -> Path:
 
     cache_dir = Path(storage_cfg.get("local_cache_dir", ".cache/hdfs"))
     cache_dir.mkdir(parents=True, exist_ok=True)
-    local_path = cache_dir / Path(path_text.rstrip("/")).name
+    source_name = Path(path_text.rstrip("/")).name or "data"
+    source_digest = hashlib.md5(path_text.encode("utf-8")).hexdigest()[:10]
+    local_path = cache_dir / f"{source_digest}_{source_name}"
     hdfs_cmd = storage_cfg.get("hdfs_cmd", "hdfs")
     command = [hdfs_cmd, "dfs", "-get", "-f", path_text, str(local_path)]
     try:
@@ -903,6 +915,171 @@ def parse_libsvm_line(
     )
 
 
+def _coerce_label_values(value: Any, label_separator: str = ",") -> List[float]:
+    """把 parquet 中的 label 字段统一转成多目标 label 列表。"""
+
+    if isinstance(value, torch.Tensor):
+        value = value.detach().cpu().flatten().tolist()
+    if isinstance(value, (list, tuple)):
+        return [float(item) for item in value]
+    if isinstance(value, str):
+        return _split_labels(value, label_separator)
+    return [float(value)]
+
+
+def _parse_feature_token(token: Any, feature_id_offset: int = 1) -> Tuple[int, float]:
+    """解析 parquet 中的一项稀疏特征。
+
+    支持标准 libsvm 字符串 `fid:value`，也支持 parquet 里常见的 struct/list
+    表达：`{"fid": 12, "value": 0.8}` 或 `[12, 0.8]`。
+    """
+
+    if isinstance(token, Mapping):
+        raw_id = token.get("feature_id", token.get("fid", token.get("id", token.get("index"))))
+        raw_value = token.get("feature_value", token.get("value", token.get("weight", 1.0)))
+    elif isinstance(token, (list, tuple)):
+        if not token:
+            raise ValueError("空特征 token 无法解析")
+        raw_id = token[0]
+        raw_value = token[1] if len(token) > 1 else 1.0
+    elif isinstance(token, str):
+        if ":" in token:
+            raw_id, raw_value = token.split(":", 1)
+        else:
+            raw_id, raw_value = token, 1.0
+    else:
+        raw_id, raw_value = token, 1.0
+
+    if raw_id is None:
+        raise ValueError(f"特征 token 缺少 feature_id/fid/id/index: {token}")
+    fid = int(raw_id) + feature_id_offset
+    if fid <= 0:
+        raise ValueError(f"feature_id + offset 必须大于 0，当前 token={token}")
+    return fid, float(raw_value)
+
+
+def _iter_feature_items(value: Any, delimiter: str = " ") -> Iterable[Any]:
+    """把 parquet 中的 features 字段拆成 token 序列。"""
+
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [item for item in value.strip().split(delimiter) if item]
+    if isinstance(value, Mapping):
+        return [{"feature_id": key, "value": item_value} for key, item_value in value.items()]
+    if isinstance(value, torch.Tensor):
+        value = value.detach().cpu().flatten().tolist()
+    if isinstance(value, (list, tuple)):
+        return value
+    return [value]
+
+
+def _first_present_value(row: Mapping[str, Any], names: Sequence[str]) -> str:
+    """从 row 中按候选列名取第一个非空值。"""
+
+    lower_to_key = {str(key).lower(): key for key in row}
+    for name in names:
+        key = lower_to_key.get(str(name).lower())
+        if key is None:
+            continue
+        value = row.get(key)
+        if value is not None:
+            return str(value)
+    return ""
+
+
+def _string_or_empty(value: Any) -> str:
+    """把可选元信息列转成字符串，None 保持为空。"""
+
+    return "" if value is None else str(value)
+
+
+def parse_parquet_libsvm_row(
+    row: Mapping[str, Any],
+    parquet_config: Optional[Mapping[str, Any]] = None,
+    label_separator: str = ",",
+    feature_id_offset: int = 1,
+) -> Optional[LibSVMSample]:
+    """解析 parquet 中的一条 libsvm 样本。
+
+    支持两类输入：
+    - `libsvm_column`：某列直接存完整 libsvm 文本，例如 data/train.libsvm 中的一行。
+    - 拆列：label/feature/trace/user 分别放在不同 parquet 列中。
+    """
+
+    parquet_config = parquet_config or {}
+    libsvm_column = parquet_config.get("libsvm_column", "libsvm")
+    if libsvm_column in row and row.get(libsvm_column) is not None:
+        return parse_libsvm_line(
+            str(row[libsvm_column]),
+            label_separator=label_separator,
+            feature_id_offset=feature_id_offset,
+        )
+
+    label_columns = list(parquet_config.get("label_columns") or [])
+    if label_columns:
+        labels = [float(row[name]) for name in label_columns]
+    else:
+        label_column = parquet_config.get("label_column", "label")
+        if label_column not in row:
+            raise ValueError(
+                f"parquet libsvm 缺少 label 列 `{label_column}`，"
+                "可配置 data.parquet.label_column 或 data.parquet.label_columns"
+            )
+        labels = _coerce_label_values(row[label_column], label_separator=label_separator)
+
+    feature_ids: List[int] = []
+    feature_values: List[float] = []
+    feature_id_column = parquet_config.get("feature_id_column")
+    feature_value_column = parquet_config.get("feature_value_column")
+    if feature_id_column:
+        raw_ids = list(_iter_feature_items(row.get(feature_id_column), delimiter=","))
+        raw_values = (
+            list(_iter_feature_items(row.get(feature_value_column), delimiter=","))
+            if feature_value_column
+            else [1.0] * len(raw_ids)
+        )
+        if len(raw_ids) != len(raw_values):
+            raise ValueError("feature_id_column 与 feature_value_column 长度不一致")
+        feature_items: Iterable[Any] = zip(raw_ids, raw_values)
+    else:
+        feature_column = parquet_config.get("feature_column", "features")
+        if feature_column not in row:
+            raise ValueError(
+                f"parquet libsvm 缺少 features 列 `{feature_column}`，"
+                "可配置 data.parquet.feature_column 或 feature_id_column/feature_value_column"
+            )
+        feature_items = _iter_feature_items(
+            row.get(feature_column),
+            delimiter=str(parquet_config.get("feature_delimiter", " ")),
+        )
+
+    for token in feature_items:
+        fid, value = _parse_feature_token(token, feature_id_offset=feature_id_offset)
+        if value != 0.0:
+            feature_ids.append(fid)
+            feature_values.append(value)
+
+    trace_id_column = parquet_config.get("trace_id_column")
+    user_id_column = parquet_config.get("user_id_column")
+    trace_id = _string_or_empty(row.get(trace_id_column)) if trace_id_column else _first_present_value(
+        row,
+        ["trace_id", "traceid", "request_id", "req_id", "qid"],
+    )
+    user_id = _string_or_empty(row.get(user_id_column)) if user_id_column else _first_present_value(
+        row,
+        ["user_id", "userid", "uid"],
+    )
+
+    return LibSVMSample(
+        labels=labels,
+        feature_ids=feature_ids,
+        feature_values=feature_values,
+        trace_id=trace_id,
+        user_id=user_id,
+    )
+
+
 class LibSVMDataset(Dataset):
     """libsvm 文件数据集，支持简单正负采样和样本数截断。"""
 
@@ -949,6 +1126,92 @@ class LibSVMDataset(Dataset):
         for sample in self.samples:
             if len(sample.labels) != label_dim:
                 raise ValueError("同一个数据文件内 label 维度不一致，请检查多目标标签格式")
+
+        self.info = DataInfo(
+            num_features=max((max(s.feature_ids) if s.feature_ids else 0) for s in self.samples) + 1,
+            label_dim=label_dim,
+            max_nnz=max(len(s.feature_ids) for s in self.samples),
+            num_samples=len(self.samples),
+        )
+
+    def __len__(self) -> int:
+        return len(self.samples)
+
+    def __getitem__(self, index: int) -> LibSVMSample:
+        return self.samples[index]
+
+
+def _iter_parquet_rows(path: str | Path, batch_size: int = 8192) -> Iterable[Mapping[str, Any]]:
+    """逐 batch 读取 parquet 行，支持单文件或目录。"""
+
+    try:
+        import pyarrow.dataset as ds
+    except ImportError as exc:
+        raise RuntimeError(
+            "读取 parquet 数据需要安装 pyarrow。请执行 `pip install pyarrow`，"
+            "或使用项目 requirements/pyproject 中声明的依赖。"
+        ) from exc
+
+    dataset = ds.dataset(str(path), format="parquet")
+    for batch in dataset.to_batches(batch_size=batch_size):
+        for row in batch.to_pylist():
+            yield row
+
+
+class ParquetLibSVMDataset(Dataset):
+    """parquet 承载的 libsvm 样本数据集。
+
+    parquet 可来自本地路径，也可先通过 `prepare_input_path` 从 HDFS 拉取到本地
+    cache。样本内容仍会被归一成 LibSVMSample，供现有 DeepFM 链路复用。
+    """
+
+    def __init__(
+        self,
+        path: str | Path,
+        parquet_config: Optional[Mapping[str, Any]] = None,
+        label_separator: str = ",",
+        sample_rate: float = 1.0,
+        negative_sample_rate: float = 1.0,
+        max_samples: Optional[int] = None,
+        seed: int = 2026,
+    ) -> None:
+        self.path = Path(path)
+        self.label_separator = label_separator
+        self.samples: List[LibSVMSample] = []
+        parquet_config = parquet_config or {}
+
+        if not self.path.exists():
+            raise FileNotFoundError(f"数据路径不存在: {self.path}")
+
+        rng = random.Random(seed)
+        batch_size = int(parquet_config.get("read_batch_size", 8192))
+        for row in _iter_parquet_rows(self.path, batch_size=batch_size):
+            sample = parse_parquet_libsvm_row(
+                row,
+                parquet_config=parquet_config,
+                label_separator=label_separator,
+                feature_id_offset=int(parquet_config.get("feature_id_offset", 1)),
+            )
+            if sample is None:
+                continue
+
+            if sample_rate < 1.0 and rng.random() > sample_rate:
+                continue
+            if sample.labels and sample.labels[0] <= 0.0:
+                if negative_sample_rate < 1.0 and rng.random() > negative_sample_rate:
+                    continue
+
+            self.samples.append(sample)
+            if max_samples is not None and len(self.samples) >= max_samples:
+                break
+
+        if not self.samples:
+            raise ValueError(f"没有从 {self.path} 读取到有效样本")
+
+        label_dim = len(self.samples[0].labels)
+        for sample in self.samples:
+            if len(sample.labels) != label_dim:
+                raise ValueError("同一个 parquet 数据文件内 label 维度不一致，请检查多目标标签格式")
 
         self.info = DataInfo(
             num_features=max((max(s.feature_ids) if s.feature_ids else 0) for s in self.samples) + 1,
@@ -1051,7 +1314,7 @@ def build_dataloaders(config: Dict) -> Tuple[Dict[str, DataLoader], DataInfo]:
             if not path:
                 continue
             raw_datasets[split] = RawFeatureDataset(
-                path=prepare_input_path(path, config),
+                path=prepare_input_path(path, config, split=split),
                 feature_specs=feature_specs,
                 label_names=label_names,
                 multi_hot_normalize=data_cfg.get("multi_hot_normalize", "mean"),
@@ -1084,29 +1347,37 @@ def build_dataloaders(config: Dict) -> Tuple[Dict[str, DataLoader], DataInfo]:
             )
         return dataloaders, data_info
 
-    if data_format != "libsvm":
+    libsvm_formats = {"libsvm", "parquet", "parquet_libsvm", "libsvm_parquet"}
+    if data_format not in libsvm_formats:
         raise ValueError(f"不支持的数据格式: {data_format}")
 
-    datasets: Dict[str, LibSVMDataset] = {}
+    datasets: Dict[str, Dataset] = {}
     for split in ("train", "valid", "test"):
         path = data_cfg.get(f"{split}_path")
         if not path:
             continue
-        prepared_path = prepare_input_path(path, config)
+        prepared_path = prepare_input_path(path, config, split=split)
         negative_sample_rate = (
             float(data_cfg.get("negative_sample_rate", 1.0))
             if split == "train"
             else float(data_cfg.get(f"{split}_negative_sample_rate", 1.0))
         )
 
-        datasets[split] = LibSVMDataset(
-            path=prepared_path,
-            label_separator=label_separator,
-            sample_rate=float(data_cfg.get(f"{split}_sample_rate", 1.0)),
-            negative_sample_rate=negative_sample_rate,
-            max_samples=data_cfg.get(f"{split}_max_samples"),
-            seed=int(config.get("seed", 2026)),
-        )
+        dataset_kwargs = {
+            "path": prepared_path,
+            "label_separator": label_separator,
+            "sample_rate": float(data_cfg.get(f"{split}_sample_rate", 1.0)),
+            "negative_sample_rate": negative_sample_rate,
+            "max_samples": data_cfg.get(f"{split}_max_samples"),
+            "seed": int(config.get("seed", 2026)),
+        }
+        if data_format == "libsvm":
+            datasets[split] = LibSVMDataset(**dataset_kwargs)
+        else:
+            datasets[split] = ParquetLibSVMDataset(
+                **dataset_kwargs,
+                parquet_config=data_cfg.get("parquet", {}),
+            )
 
     if "train" not in datasets:
         raise ValueError("配置中必须提供 data.train_path")

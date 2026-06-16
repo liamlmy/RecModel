@@ -1,0 +1,30 @@
+data:
+  # parquet 或 parquet_libsvm 均表示 parquet 承载的 libsvm 稀疏样本。
+  format: parquet_libsvm
+
+  # 全部切分都在 HDFS 时设置全局 path_type=hdfs。
+  # 如需混合来源，可用 train_path_type/valid_path_type/test_path_type 单独覆盖。
+  path_type: hdfs
+  train_path: hdfs:///path/to/train_parquet
+  valid_path: hdfs:///path/to/valid_parquet
+  test_path: hdfs:///path/to/test_parquet
+
+  parquet:
+    # 方式一：某列直接存完整 libsvm 文本，例如 data/train.libsvm 中的一整行。
+    libsvm_column: libsvm
+
+    # 方式二：拆列存储时使用这些列。若 libsvm_column 存在且非空，会优先使用完整文本列。
+    label_column: label
+    # label_columns: ["click", "convert"]
+    feature_column: features
+    # feature_id_column: feature_ids
+    # feature_value_column: feature_values
+    trace_id_column: traceid
+    user_id_column: userid
+    feature_id_offset: 1
+    read_batch_size: 8192
+
+storage:
+  input_type: hdfs
+  hdfs_cmd: hdfs
+  local_cache_dir: .cache/hdfs

@@ -11,13 +11,33 @@ storage:
   local_cache_dir: .cache/hdfs
 
 data:
-  # format 支持 libsvm/jsonl。libsvm 适合离线展开稀疏特征；jsonl 适合结构化 input 模块。
+  # format 支持 libsvm/parquet_libsvm/jsonl。
+  # libsvm 适合离线展开稀疏特征；parquet_libsvm 用于 HDFS/本地 parquet 承载的 libsvm 样本；
+  # jsonl 适合结构化 input 模块。
   format: libsvm
   # libsvm 格式。单目标示例：1 1:1 3:0.2
   # 多目标示例：1,0 1:1 3:0.2
+  # path_type 可全局设置 local/hdfs；也可用 train_path_type/valid_path_type/test_path_type 单独覆盖。
   path_type: local
   train_path: data/train.libsvm
   test_path: data/test.libsvm
+  # train_path_type: hdfs
+  # valid_path_type: local
+  # test_path_type: local
+  parquet:
+    # parquet_libsvm 支持两种布局：
+    # 1) libsvm_column 存完整 libsvm 文本；
+    # 2) label/labels + features 拆列，其中 features 可为 "fid:value fid:value"、list、map 或 struct list。
+    libsvm_column: libsvm
+    label_column: label
+    # label_columns: ["click", "convert"]
+    feature_column: features
+    # feature_id_column: feature_ids
+    # feature_value_column: feature_values
+    trace_id_column: traceid
+    user_id_column: userid
+    feature_id_offset: 1
+    read_batch_size: 8192
   # 使用 jsonl 时改成 rich_*.jsonl，并配置 feature_schema_path/label_names。
   feature_schema_path: data/rich_feature_schema.json
   label_names: ["click", "convert"]
